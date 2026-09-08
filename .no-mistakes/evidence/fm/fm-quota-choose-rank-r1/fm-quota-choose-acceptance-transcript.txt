@@ -1,0 +1,83 @@
+# Acceptance: "claude claude-opus-5" when Fable is listed first and Opus has the highest known spendPriority
+# Fixture mirrors the recorded real Claude row shapes (all_models + model:fable); Opus reads the all_models row.
+$ cat opus-first.toon
+bin: quota-axi
+generatedAt: "2026-09-07T00:00:00Z"
+quota[3]{provider,scope,effectivePercentRemaining,spendPriority,runway,confidence,limitedBy,resetsAt}:
+  claude,all_models,10,1.4,through_reset,established,seven_day,"2026-09-14T00:00:00Z"
+  claude,"model:fable",4,0.3,through_reset,established,"model:fable","2026-09-14T00:00:00Z"
+  codex,all_models,64,1.1,through_reset,established,weekly,"2026-09-14T00:00:00Z"
+exhaustion[0]:
+attention[0]:
+
+$ bin/fm-quota-choose.sh --snapshot opus-first.toon claude:fable claude:claude-opus-5   # target b9cbde6
+claude claude-opus-5
+exit=0
+
+$ <base 72bfdd0>/bin/fm-quota-choose.sh --snapshot opus-first.toon claude:fable claude:claude-opus-5   # before the fix: first-eligible wins
+claude fable
+exit=0
+
+$ bin/fm-quota-choose.sh --ordered --snapshot opus-first.toon claude:fable claude:claude-opus-5   # --ordered keeps the old behavior
+claude fable
+exit=0
+
+$ bin/fm-quota-choose.sh --snapshot opus-first.toon claude:claude-fable-5-1 claude:claude-opus-5   # explicit id does not match model:fable, both read all_models -> tie, exit 3
+tie claude claude-fable-5-1
+tie claude claude-opus-5
+exit=3
+
+$ bin/fm-quota-choose.sh --snapshot opus-first.toon codex:default claude:claude-opus-5   # cross-provider rank, codex first in argv
+claude claude-opus-5
+exit=0
+
+$ bin/fm-quota-choose.sh --snapshot opus-first.toon grok:default   # no eligible candidate unchanged
+none
+exit=1
+
+$ bin/fm-quota-choose.sh --help | sed -n 1,45p
+Choose the quota-eligible candidate with the highest known spendPriority.
+
+Usage:
+  fm-quota-choose.sh [--snapshot <path>] [--ordered] [--candidate <harness:model>]...
+
+Reads one already-captured quota-axi default TOON or JSON snapshot from the
+provided file, or from stdin when --snapshot is omitted. For each --candidate
+it maps <harness> to its primary provider family, then applies the
+provider-wide scopes and exact model or product scopes for <model>. The <model>
+token is matched exactly against the `model:` and `product:` scope suffixes,
+so pass the token the snapshot actually uses when quota-axi names a model
+window differently from the dispatch id - for example claude:fable rather
+than claude:claude-fable-5-1. A candidate is eligible only when no applicable
+runway is `exhausted_now` and its known effective percent remaining is
+greater than zero.
+
+Among the eligible candidates the helper ranks by known `spendPriority`, read
+from the tightest applicable scope: the exact model or product row when one
+applies, otherwise the provider-wide row. A higher known scalar is better.
+Where several rows share that tightest scope, the lowest known scalar is used.
+A candidate whose tightest scope publishes no known scalar - absent, `unknown`,
+or unmeasurable - stays eligible but ranks below every known value and never
+breaks a tie. A present-but-unknown model or product row is never backfilled
+from the provider-wide row, because quota-axi reports that tighter scope as
+unmeasurable rather than healthy.
+
+The single highest-ranked candidate is printed as "<harness> <model>" and the
+script exits 0. When two or more candidates share the highest known scalar the
+helper refuses to break the tie: it prints "tie <harness> <model>" for each
+tied candidate, one per line, and exits 3, and the caller escalates that choice
+rather than resolving it by order. When two or more candidates are eligible
+and none has a known scalar there is nothing comparable to rank on, so the
+helper escalates exactly like an exact tie: "tie <harness> <model>" for every
+eligible candidate and exit 3, never a pick by argument order. A single
+eligible candidate is printed as "<harness> <model>" with exit 0 whether or
+not its scalar is known. If no candidate is quota-eligible, it prints "none"
+and exits 1.
+
+--ordered restores first-eligible selection in argument order, for a caller
+whose candidate order is a deliberate preference rather than an array to rank.
+
+Candidates are accepted as `--candidate <harness:model>` or as positional
+colon-separated arguments.
+This script is deterministic and safe: it performs no side effects and exits
+nonzero when the environment would lead to an unsafe dispatch.

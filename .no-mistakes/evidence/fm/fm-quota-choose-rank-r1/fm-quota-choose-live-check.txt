@@ -1,0 +1,27 @@
+# Live check 2026-09-08T00:26:19Z: quota-axi 0.1.29 (isolated ephemeral install under /tmp, floor FM_QUOTA_AXI_MIN=0.1.29) default TOON captured once and reused below.
+# Account quota values are not persisted (docs/verification/dispatch-auth.md norm); only scope names, the rank relation, and helper output.
+$ awk '/^quota\[/{q=1;next} /^exhaustion\[/{q=0} q && /^  claude,/' live.toon | cut -d, -f1,2   # Claude quota rows in the live snapshot
+  claude,all_models
+  claude,"model:fable"
+# In this snapshot the claude all_models spendPriority (which claude-opus-5 reads) is higher than the model:fable spendPriority.
+
+$ bin/fm-quota-choose.sh --snapshot live.toon claude:fable claude:claude-opus-5   # target: Fable listed first, Opus ranks higher
+claude claude-opus-5
+exit=0
+
+$ <base 72bfdd0>/bin/fm-quota-choose.sh --snapshot live.toon claude:fable claude:claude-opus-5   # before the fix
+claude fable
+exit=0
+
+$ bin/fm-quota-choose.sh --ordered --snapshot live.toon claude:fable claude:claude-opus-5
+claude fable
+exit=0
+
+$ bin/fm-quota-choose.sh --snapshot live.toon claude:claude-fable-5-1 claude:claude-opus-5   # explicit dispatch id: no model:claude-fable-5-1 row, both read all_models -> tie
+tie claude claude-fable-5-1
+tie claude claude-opus-5
+exit=3
+
+$ bin/fm-quota-choose.sh --snapshot live.toon codex:default claude:claude-opus-5   # codex quota unavailable in this snapshot
+claude claude-opus-5
+exit=0
